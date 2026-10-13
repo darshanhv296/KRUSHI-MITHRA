@@ -1,130 +1,80 @@
-# 🌱 Krushi Mithra — IoT Smart Farming Using Machine Learning
+# Krushi Mithra — Smart Farming & Intelligent Irrigation System
 
-> **Project:** Landform Analysis and Smart Farming Using Machine Learning Techniques  
-> **Platform:** ESP32 + environmental sensors + Python backend + Machine Learning  
-> **Purpose:** Combine field measurements, weather information, agricultural ML predictions, and irrigation control in one smart-farming system.
+> **Project:** IoT Farming — Landform Analysis and Smart Farming Using Machine Learning Techniques  
+> **Platform:** ESP32 + Python + Flask + machine learning + Open-Meteo weather data  
+> **Timezone used by the project:** `Asia/Kolkata`
 
-Krushi Mithra is an IoT-based smart-farming project designed to monitor environmental conditions, support crop recommendation, provide irrigation decision support, and explore soil-moisture and rainfall forecasting. The project contains ESP32/Arduino firmware, data-cleaning and preprocessing scripts, ML training/testing scripts, trained-model folders, and a Python application that connects the device, weather information, predictions, and control functions.
+Krushi Mithra combines field sensors, an ESP32 controller, a Python runtime, weather data and four machine-learning modules. The ESP32 reads the physical sensors and controls the pump relay. The Python application coordinates the models, weather service, control decisions and backend APIs.
 
-**Important:** This README is based on the project structure shown in the supplied folder screenshots. Exact GPIO pin numbers, firmware library names, environment-variable names, model filenames, API provider, and command-line arguments must be confirmed from the source code before use. Do not guess these values.
+This README describes the repository layout, each source file, dataset-generation scripts, ML pipeline, hardware wiring, first-time Wi-Fi provisioning portal, normal startup, API checks and troubleshooting.
+
+> **Important source/configuration note:** File names, routes and data schemas below are based on the supplied project files. The exact Wi-Fi access-point SSID/password, firmware-specific captive-portal behaviour, and any local pin differences must be confirmed against the `CODE/CODE.ino` currently flashed to your ESP32. Do not assume a default AP password if the firmware does not display or define one.
 
 ---
 
 ## Contents
 
-- [1. Features](#1-features)
-- [2. System architecture](#2-system-architecture)
-- [3. Hardware](#3-hardware)
-- [4. Repository structure](#4-repository-structure)
-- [5. How the system works](#5-how-the-system-works)
-- [6. Machine-learning modules](#6-machine-learning-modules)
-- [7. Software requirements](#7-software-requirements)
-- [8. Installation](#8-installation)
-- [9. Dataset preparation and training](#9-dataset-preparation-and-training)
-- [10. Connecting and programming the ESP32](#10-connecting-and-programming-the-esp32)
-- [11. Running the system](#11-running-the-system)
-- [12. Internet and weather API](#12-internet-and-weather-api)
-- [13. Irrigation modes and safety](#13-irrigation-modes-and-safety)
-- [14. Backup and offline behaviour](#14-backup-and-offline-behaviour)
-- [15. Troubleshooting](#15-troubleshooting)
-- [16. Security](#16-security)
-- [17. Reproducibility and limitations](#17-reproducibility-and-limitations)
-- [18. Research references](#18-research-references)
+1. [System overview](#1-system-overview)
+2. [Repository structure](#2-repository-structure)
+3. [What each source file does](#3-what-each-source-file-does)
+4. [Four ML modules](#4-four-ml-modules)
+5. [Dataset generation scripts](#5-dataset-generation-scripts)
+6. [Cleaning, preprocessing, training and testing](#6-cleaning-preprocessing-training-and-testing)
+7. [Hardware and wiring](#7-hardware-and-wiring)
+8. [ESP32 Wi-Fi setup portal: first-time login](#8-esp32-wi-fi-setup-portal-first-time-login)
+9. [Start the complete Python system](#9-start-the-complete-python-system)
+10. [Dashboard and backend endpoints](#10-dashboard-and-backend-endpoints)
+11. [Irrigation logic and safety](#11-irrigation-logic-and-safety)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Data quality and model limitations](#13-data-quality-and-model-limitations)
+14. [Quick checklist](#14-quick-checklist)
 
 ---
 
-## 1. Features
+## 1. System overview
 
-- **Environmental monitoring:** Reads supported measurements from the connected sensors.
-- **ESP32 connectivity:** Sends device readings to the application using the communication method configured in the firmware.
-- **Wi-Fi setup interface:** The project includes a Wi-Fi setup/captive-portal workflow where implemented by the firmware.
-- **Web dashboard:** Displays supported readings, status, predictions, and controls exposed by the application.
-- **Manual and automatic irrigation:** Provides pump control through the configured application and device-side logic.
-- **Timed watering:** Available where implemented by the firmware and dashboard.
-- **Weather API integration:** Retrieves external weather information when internet access and valid API configuration are available.
-- **Four ML tasks:** Crop recommendation, context-aware irrigation, future soil-moisture prediction, and rainfall prediction.
-- **Data pipeline:** Includes dataset cleaning, preprocessing, model training, testing, and result directories.
-- **Local device operation:** Essential sensor and pump functions may continue without the PC-based ML backend only to the extent implemented in the ESP32 firmware.
-
-Feature availability depends on the actual code and configuration. A feature should be described as operational only after it has been tested on the target hardware.
-
----
-
-## 2. System architecture
+### Main data flow
 
 ```text
-Agricultural environment
-        |
-        v
-Sensors connected to ESP32
-        |
-        v
-ESP32 firmware and Wi-Fi
-        |
-        v
-Python application / backend
-        |------------------------|
-        |                        |
-        v                        v
-Weather API                 ML inference
-        |                        |
-        |               M1 / M2 / M3 / M4
-        |                        |
-        |------------------------|
-                     |
-                     v
-          Dashboard and control logic
-                     |
-                     v
-             ESP32 / relay / pump
+Capacitive soil-moisture sensor ─┐
+DHT11 (air temperature/humidity) ├──> ESP32 ──> Wi-Fi / HTTP API
+DS18B20 (soil temperature)       ┤                 │
+FC-37 / rain module (wetness)     ┤                 ▼
+LDR (light level)                ┘          Python runtime
+                                               │
+                         ┌─────────────────────┼────────────────────┐
+                         ▼                     ▼                    ▼
+                    Flask backend        Open-Meteo service     ML engine
+                         │                                          │
+                         └─────────────────────┬────────────────────┘
+                                               ▼
+                                      Irrigation controller
+                                               │
+                                               ▼
+                                         ESP32 relay
+                                               │
+                                               ▼
+                                            Water pump
 ```
 
-### Main layers
+### Responsibilities
 
-1. **Sensing layer:** Measures local environmental conditions.
-2. **Embedded layer:** ESP32 reads sensor signals, manages supported local control, and communicates over the configured network.
-3. **Application layer:** Python modules receive device data, expose application functionality, and coordinate API and ML operations.
-4. **ML layer:** Trained models produce predictions from inputs compatible with their training pipelines.
-5. **Control layer:** Applies irrigation rules and safety checks before supported pump actions.
-6. **Presentation layer:** The web interface displays available readings, statuses, controls, and predictions.
+- **ESP32 firmware (`CODE/CODE.ino`)**: reads connected sensors, provides device HTTP endpoints, handles Wi-Fi provisioning, and executes hardware commands through the relay.
+- **Python runtime (`SYSTEM/main.py`)**: starts the Flask backend, connects to the ESP32, initializes ML and weather services, and runs background polling/control/display loops.
+- **ML engine (`SYSTEM/ml.py`)**: loads trained model artifacts and prepares predictions for M1–M4.
+- **Irrigation controller (`SYSTEM/control.py`)**: combines current state, configured thresholds, rain protection and model outputs to decide whether to request pump operation.
+- **ESP32 client (`SYSTEM/esp32.py`)**: sends HTTP requests to the ESP32 and can discover it on the local network using UDP port `4210`.
+- **Flask backend (`SYSTEM/backend.py`)**: exposes status, telemetry, Wi-Fi provisioning proxy and ML API endpoints on port `5000`.
+- **Weather service (`SYSTEM/weather.py`)**: retrieves current, forecast and historical weather information from Open-Meteo.
+- **Dataset scripts**: fetch/build historical training data. They are offline data-preparation tools, not the live pump controller.
 
-Sensor readings, external weather data, and ML predictions are different types of information. The dashboard should not label an API forecast as a physical sensor measurement.
-
----
-
-## 3. Hardware
-
-The project documentation identifies the following components:
-
-| Component | Purpose |
-|---|---|
-| ESP32 development board | Sensor acquisition, Wi-Fi connectivity, and supported device-side control |
-| Capacitive soil-moisture sensor | Measures a signal related to soil moisture |
-| DHT11 | Measures ambient air temperature and relative humidity |
-| DS18B20 | Measures temperature at the probe location in soil |
-| FC-37 / raindrop module | Detects wetness on its sensing plate; it does not directly measure rainfall in millimetres |
-| LDR | Detects changes in ambient light |
-| Relay module | Switches the pump circuit when correctly rated and wired |
-| Water pump and suitable power supply | Delivers water for irrigation |
-
-### Wiring precautions
-
-- Use the **actual GPIO assignments defined in the firmware**. Do not use guessed pin numbers.
-- Check the voltage and output type of each sensor before connecting it to the ESP32.
-- ESP32 GPIO inputs are **not 5 V tolerant**. Do not apply a 5 V signal directly to an ESP32 input.
-- Connect grounds appropriately for low-voltage sensor circuits where required.
-- Power the pump from a supply rated for the pump, not from an ESP32 GPIO pin.
-- Use a suitable relay/driver and follow electrical isolation and load-current ratings.
-- Disconnect power before changing wiring.
-- Keep water away from exposed electronics and mains wiring.
-
-Add a wiring diagram to `docs/` once the final, verified pin mapping is documented.
+The normal dashboard is served by the ESP32 at `http://<ESP32-IP>/`. The Python backend runs on the computer at `http://127.0.0.1:5000/` for local API access.
 
 ---
 
-## 4. Repository structure
+## 2. Repository structure
 
-The following structure is based on the supplied screenshots. File extensions and names should be checked against the actual files in the repository.
+The following is the expected high-level layout. Generated files and model-artifact folders appear after running the relevant scripts.
 
 ```text
 IOT-FARM/
@@ -136,28 +86,28 @@ IOT-FARM/
 │   └── soil.py
 │
 ├── DATASET/
-│   ├── CLEANED/
-│   ├── PREPROCESSED/
-│   │   ├── M1_Crop_Recommendation/
-│   │   ├── M2_Context_Aware_Irrigation/
-│   │   ├── M3_Future_Soil_Moisture/
-│   │   └── M4_Rainfall_Forecasting/
 │   ├── Crop_Recommendation.csv
 │   ├── Rain_Prediction.csv
 │   ├── Smart_Irrigation.csv
 │   ├── Soil_Moisture_Prediction.csv
 │   ├── clean.py
-│   └── preprocess.py
+│   ├── preprocess.py
+│   ├── CLEANED/
+│   └── PREPROCESSED/
+│       ├── M1_Crop_Recommendation/
+│       ├── M2_Context_Aware_Irrigation/
+│       ├── M3_Future_Soil_Moisture/
+│       └── M4_Rainfall_Forecasting/
 │
 ├── MODELS/
-│   ├── TEST_RESULTS/
+│   ├── train.py
+│   ├── test.py
 │   ├── TRAINED_MODELS/
 │   ├── TRAINING_RESULTS/
-│   ├── test.py
-│   └── train.py
+│   └── TEST_RESULTS/
 │
 ├── PAPERS/
-│   └── Research papers (PDF files)
+│   └── Research papers and reference material
 │
 ├── SYSTEM/
 │   ├── data/
@@ -175,417 +125,557 @@ IOT-FARM/
 └── README.md
 ```
 
-### What each file/folder is for
-
-#### `CODE/`
-
-- **`CODE.ino`** — expected to contain the Arduino/ESP32 firmware entry point. Confirm the actual sketch name and its sensor pins, Wi-Fi setup, communication protocol, and relay logic from the file.
-- **`crop.py`** — a crop-related Python script, based on its name. Confirm whether it performs inference, preprocessing, or another task.
-- **`pump.py`** — a pump-related Python script. Confirm whether it controls, tests, or models pump behaviour.
-- **`rain.py`** — a rain-related Python script. Confirm its actual role and whether it works with the sensor, weather data, or ML model.
-- **`soil.py`** — a soil-related Python script. Confirm whether it processes soil data, predicts moisture, or performs another task.
-
-The Python scripts inside `CODE/` should not automatically be assumed to be part of the firmware; Python and Arduino code run in different environments.
-
-#### `DATASET/`
-
-- **`Crop_Recommendation.csv`** — source data for the crop-recommendation task, subject to dataset provenance and licensing.
-- **`Rain_Prediction.csv`** — source data for the rainfall-prediction task.
-- **`Smart_Irrigation.csv`** — source data for irrigation-related training.
-- **`Soil_Moisture_Prediction.csv`** — source data for soil-moisture forecasting.
-- **`clean.py`** — dataset cleaning script.
-- **`preprocess.py`** — data preparation script for the training pipeline.
-- **`CLEANED/`** — generated cleaned datasets.
-- **`PREPROCESSED/`** — model-ready datasets, organised by M1–M4.
-
-The precise transformations, target columns, and feature lists are defined by the scripts and should be documented from the actual code.
-
-#### `MODELS/`
-
-- **`train.py`** — training entry point for the configured algorithms and modules.
-- **`test.py`** — testing/evaluation entry point.
-- **`TRAINED_MODELS/`** — generated model artifacts, organised by module.
-- **`TRAINING_RESULTS/`** — training metrics and other outputs, depending on the implementation.
-- **`TEST_RESULTS/`** — testing/evaluation outputs, depending on the implementation.
-
-Large model binaries and generated outputs can be kept outside Git and regenerated using the training scripts. If model files are required to run inference immediately, document how to obtain them.
-
-#### `SYSTEM/`
-
-- **`main.py`** — likely the main application entry point; verify its imports and run configuration before using it.
-- **`backend.py`** — backend functionality; verify its routes and responsibilities.
-- **`config.py`** — application configuration; do not commit secrets.
-- **`control.py`** — irrigation/device control functionality, subject to the actual implementation.
-- **`esp32.py`** — ESP32 communication functionality, subject to the actual protocol used.
-- **`ml.py`** — model-loading and prediction integration, subject to the actual implementation.
-- **`weather.py`** — weather API integration, subject to the actual provider and endpoints.
-- **`data/`** — application data or generated files; inspect contents before publishing.
-
-#### `PAPERS/`
-
-Contains research papers consulted during project development. Respect each paper's copyright and sharing terms. When redistribution is not permitted, publish citations/DOIs and a literature summary instead of the PDF itself.
+**Paths matter.** Run the commands from the repository root unless a step explicitly says otherwise. Dataset scripts generally write outputs relative to their own script location; model and runtime artifact locations are determined by the path settings in the project's configuration and training scripts. If your local folder names differ, follow the paths in your actual files.
 
 ---
 
-## 5. How the system works
+## 3. What each source file does
 
-### 5.1 Sensor acquisition
+### `CODE/` — firmware and dataset-building scripts
 
-The ESP32 reads the connected sensor channels according to the firmware. Analog sensors such as the capacitive soil-moisture sensor and LDR use analog inputs; digital sensors use their corresponding communication interfaces.
+#### `CODE/CODE.ino`
+The ESP32 firmware. It is responsible for the physical-device side of the project:
+- initialises the sensors and relay pin;
+- reads and reports telemetry;
+- handles Wi-Fi setup/provisioning;
+- exposes HTTP endpoints for sensor data, device status and control;
+- accepts commands for system enable/disable, AUTO/MANUAL mode and pump control;
+- enforces device-side rules before operating the relay.
 
-Sensor readings should be validated and calibrated. Raw ADC values are not automatically percentages, and the rain/wetness module does not produce a rainfall forecast.
+Upload this file to the ESP32 using Arduino IDE or another compatible ESP32 build workflow. Select the correct ESP32 board and serial port. Install the libraries included by the sketch's `#include` statements before compiling. The sketch is the authoritative source for exact AP SSID/password, sensor libraries, route behaviour and pin definitions.
 
-### 5.2 Device-to-application communication
+#### `CODE/crop.py`
+Builds a crop-recommendation dataset using crop/location profiles and historical daily weather summaries fetched from the Open-Meteo archive. It calculates or assembles fields such as location, year, soil type, annual rainfall, temperature, humidity and soil moisture, then creates crop-labelled records.
 
-The firmware communicates with the Python application using the protocol and endpoints configured in the code. Confirm whether the project uses HTTP, sockets, MQTT, or another method before documenting the exact ports or URLs.
+- **Purpose:** data generation for **M1 — Crop Recommendation**.
+- **Network:** internet access is needed when uncached weather data must be fetched.
+- **Output:** the generated crop CSV is written according to `OUTPUT_FILE` in the script. Check that variable in your local copy before running; do not assume it always writes to `DATASET/Crop_Recommendation.csv`.
+- **Important:** the script uses crop profiles and generated/balanced examples as part of dataset construction. This is not the same as collecting every training label directly from a field experiment.
 
-The application should check received values and timestamps before using them for display, inference, or control.
+#### `CODE/pump.py`
+Builds an hourly irrigation dataset for the Tumakuru/Tiptur area from Open-Meteo historical weather/archive data. It converts volumetric soil moisture to a percentage, calculates rolling six-hour rainfall, extracts time features and applies hysteresis thresholds to create the pump-status label.
 
-### 5.3 Weather information
+The script's shown thresholds are:
+- `MOISTURE_ON_THRESH = 25.0`: pump-status label changes to ON when moisture falls below this threshold;
+- `MOISTURE_OFF_THRESH = 30.0`: pump-status label changes to OFF after moisture recovers above this threshold.
 
-The weather module requests data from the configured external API when internet access and valid configuration are available. The returned response should be checked for errors, missing fields, units, location, and timestamp.
+The gap prevents rapid ON/OFF switching around one threshold. These are **dataset-label rules**, not automatically proof that the physical pump will use these exact thresholds at runtime.
 
-### 5.4 Machine-learning inference
+- **Purpose:** data generation for **M2 — Context-Aware Irrigation Control**.
+- **Output:** `tumakuru_irrigation_clean_hysteresis.csv` in the script's working/output location.
+- **Cache:** `tumakuru_hourly_raw_cache.csv` avoids fetching the same raw data again.
+- **Network:** internet access is required on the first uncached run.
 
-The ML integration loads trained artifacts and passes appropriately prepared features to the relevant model. Inference requires the same feature order, encoding, units, and preprocessing conventions used during training.
+#### `CODE/soil.py`
+Builds an hourly soil-moisture dataset from Open-Meteo historical/archive observations. It gathers air temperature, air humidity, soil temperature, soil moisture and precipitation for configured regions, converts volumetric soil moisture to percent, and adds time features such as hour, date, month and day of year.
 
-### 5.5 Irrigation decision and pump control
+- **Purpose:** data generation for **M3 — Future Soil Moisture Prediction**.
+- **Output:** check `OUTPUT_FILE` in the script; the final schema shown in the supplied file uses `time`, `date`, `hour`, `day_of_year`, `month`, `air_tempe`, `air_humidi`, `soil_tempe`, `soil_moist` and `rainfall_m`.
+- **Cache:** the script uses a cache CSV to avoid refetching already retrieved regions.
+- **Important:** this is historical/modelled gridded weather-service soil-moisture data, not a direct log from the project's capacitive probe. The live model pipeline needs the column schema expected by `DATASET/preprocess.py`; verify that the generated output is the intended input before replacing the project's locked source CSV.
 
-The control layer evaluates the information available to it and applies the configured logic. The ESP32/relay should retain appropriate hardware-side safety protections. A model prediction should not bypass safety checks.
+#### `CODE/rain.py`
+Downloads hourly historical weather for all 31 Karnataka districts over **2023–2025** and combines it into one district-wise CSV.
 
-### 5.6 Dashboard
+Variables include rainfall, air temperature, relative humidity, mean sea-level pressure, cloud cover and wind speed. It also adds date/time/year/month/day-of-year/hour features.
 
-The browser-based interface presents only the readings, status fields, predictions, and controls exposed by the application. Actual update frequency depends on sensor sampling, network communication, backend processing, and dashboard refresh behaviour.
+- **Purpose:** data generation for **M4 — Rainfall Forecasting**.
+- **Output:** `karnataka_3years_hourly_all_districts.csv` in the script directory.
+- **Cache:** per-district/per-year CSVs are stored in `raw_cache/`.
+- **Network/time:** the first run can take a while because it fetches many district-years. Cached runs are faster.
+- **Important:** the model-preprocessing pipeline expects the column names defined in `DATASET/clean.py` and `DATASET/preprocess.py`. Confirm that the output filename/schema is copied or mapped to `DATASET/Rain_Prediction.csv` before running the cleaning step.
+
+### `DATASET/` — data preparation
+
+#### `DATASET/clean.py`
+Checks that the four locked input CSVs exist and match expected column names/order, reports duplicate rows and cleans the data into `DATASET/CLEANED/`.
+
+Expected input files:
+- `Crop_Recommendation.csv`
+- `Rain_Prediction.csv`
+- `Smart_Irrigation.csv` (the cleaner's current expected spelling for this file)
+- `Soil_Moisture_Prediction.csv`
+
+Expected schemas include:
+- M1: `Location`, `Year`, `Soil_Type`, `Annual_Rainfall_mm`, `Temperature`, `Humidity`, `Soil_Moisture`, `Crop`
+- M2: `timestamp`, `air_temperature_c`, `air_humidity_pct`, `soil_temperature_c`, `soil_moisture_pct`, `water_pump_status`
+- M3: `site`, `timestamp`, `air_temperature_c`, `air_humidity_pct`, `soil_temperature_c`, `soil_moisture_pct`, `moisture_lag_1h`, `moisture_lag_3h`, `rain_now_mm`, `rain_sum_6h_mm`, `rain_next_1h_mm`, `hour_sin`, `hour_cos`, `target_moisture_1h`, `split`
+- M4: `district`, `timestamp`, `date`, `time`, `year`, `month`, `day_of_year`, `hour`, `rainfall_mm`, `temperature_c`, `humidity_percent`, `pressure_msl_hpa`, `cloud_cover_percent`, `wind_speed_kmh`
+
+**Filename warning:** the cleaner expects `Smart_Irigation.csv` (single “r” in “Irigation”) in its current configuration, while the repository listing or other files may show `Smart_Irrigation.csv` (double “r”). Keep the actual filename and `clean.py` configuration consistent. Do not rename a file blindly.
+
+#### `DATASET/preprocess.py`
+Reads the cleaned datasets, validates required fields, parses/sorts timestamps, constructs model features and creates train/test CSVs in `DATASET/PREPROCESSED/`.
+
+Output folders:
+- `M1_Crop_Recommendation/`
+- `M2_Context_Aware_Irrigation/`
+- `M3_Future_Soil_Moisture/`
+- `M4_Rainfall_Forecasting/`
+
+Each folder contains `train.csv` and `test.csv`. The script uses a chronological split for time-series modules so future timestamps are held out rather than randomly mixed with earlier observations. M3 builds a one-hour-ahead soil-moisture target; M4 holds out later timestamps for rainfall testing.
+
+### `MODELS/` — model training and evaluation
+
+#### `MODELS/train.py`
+Loads the preprocessed training files and trains the supported classification/regression candidates. The script's model suite includes Random Forest, XGBoost and LightGBM for the relevant tasks. It saves model artifacts and training metrics in the output folders configured in the script.
+
+Training cannot complete successfully if the expected `train.csv` files are missing or if required Python packages are not installed. The exact artifact filenames used by the live system must match those expected by `SYSTEM/ml.py`.
+
+#### `MODELS/test.py`
+Loads preprocessed test sets and available trained artifacts, performs predictions in batches, shows progress and computes task-appropriate metrics. For classification it reports classification metrics; for regression it reports MAE, RMSE and R². It saves consolidated CSV/JSON results under the configured test-results directory.
+
+A test may be skipped when a test set or model file is missing. Read the console output rather than assuming every module/model was tested.
+
+### `SYSTEM/` — live runtime
+
+#### `SYSTEM/config.py`
+Central settings for the system: ESP32 connection settings, polling intervals, location/weather configuration, runtime timing and ML defaults. Review this file before deployment. Keep Wi-Fi passwords out of source code and do not commit secrets.
+
+#### `SYSTEM/esp32.py`
+HTTP client for the ESP32. It communicates with the device's data/status/configuration and control endpoints, and provides Wi-Fi scan/connect/status helpers. It also supports UDP discovery on port `4210`; discovery generally requires the computer and ESP32 to be on the same local network and local firewall rules to permit the traffic.
+
+#### `SYSTEM/weather.py`
+Open-Meteo integration for current conditions, forecasts and historical weather references. It provides location/district helpers and rainfall aggregation used by ML and control. The supplied code uses Open-Meteo endpoints and does not show a required API key. Internet access is still required for fresh remote weather requests.
+
+#### `SYSTEM/ml.py`
+Loads trained artifacts and runs M1–M4 predictions. The supplied runtime expects these model-artifact families:
+- M1: Random Forest under `M1_Crop_Recommendation/`
+- M2: LightGBM under `M2_Context_Aware_Irrigation/`
+- M3: LightGBM under `M3_Future_Soil_Moisture/`
+- M4: XGBoost under `M4_Rainfall_Forecasting/`, with a compatibility fallback for `M4_Hourly_Rainfall/`
+
+The loader also expects supporting preprocessing pipelines, feature definitions and (where relevant) label encoders. A model file alone may not be enough; the complete artifact format and folder name must match what `ml.py` expects.
+
+M3 stores recent sensor history in `SYSTEM/data/m3_sensor_history.jsonl` so it can form lag features for future-moisture prediction. This history is runtime state, not the source training dataset.
+
+**Soil moisture calibration caution:** the supplied ML helper currently maps raw ADC values using `dry=4095` and `wet=1500`. Your physical capacitive sensor readings previously observed around raw 2708–2728 in open air and 1123–1134 in water. Those endpoints are not equivalent to a calibrated dry-soil/wet-soil pair, but they show why the conversion must be checked against the actual sensor and ESP32 ADC range before trusting displayed percentages or pump thresholds.
+
+#### `SYSTEM/control.py`
+Central irrigation-decision layer. It evaluates AUTO/MANUAL mode, system enablement, moisture thresholds, rain protection and available M2/M3/M4 results, then sends the final requested pump command to the ESP32. It does not itself read GPIO or directly power the pump.
+
+#### `SYSTEM/backend.py`
+Flask API server. It serves backend status, device status/data, discovery, ML options/predictions and Wi-Fi setup proxy endpoints. It listens on port `5000` when started by the runtime.
+
+#### `SYSTEM/main.py`
+The main entry point. It starts the Flask backend on `0.0.0.0:5000` in a background thread (unless a backend is already responding), initializes the ESP32 client, loads ML artifacts, initializes the weather service, and starts background loops for sensor polling, weather updates, control and console status display.
+
+Stop the runtime with **Ctrl+C** in the terminal.
 
 ---
 
-## 6. Machine-learning modules
+## 4. Four ML modules
 
-| Module | Task | Planned model | Output |
+| Module | Task | Main inputs | Output |
 |---|---|---|---|
-| M1 | Crop recommendation | Random Forest | Crop category |
-| M2 | Context-aware irrigation | XGBoost | Pump state/category |
-| M3 | Future soil-moisture prediction | XGBoost | Moisture estimate for the trained forecast target |
-| M4 | Rainfall prediction | XGBoost | The rainfall target defined by the dataset |
+| **M1** | Crop recommendation | Location, soil type, year, annual rainfall, temperature, humidity, soil moisture | Recommended crop/class |
+| **M2** | Context-aware irrigation | Air temperature, air humidity, soil temperature, soil moisture, hour, day of week | Pump-status class |
+| **M3** | Future soil moisture | Site, current environmental readings, recent moisture lags, current/recent rainfall, cyclic time features | Predicted soil moisture about one hour ahead |
+| **M4** | Rainfall forecasting | District, year/month/day-of-year/hour, current rainfall and weather measurements | Rainfall prediction for the next hour through the live prediction flow |
 
-The model names above reflect the project's planned configuration. Confirm the actual algorithms, features, target columns, and saved artifacts in `MODELS/train.py` and the relevant dataset/preprocessing scripts.
-
-### Training versus prediction
-
-- **Training** learns model parameters from prepared historical examples and writes model artifacts/results.
-- **Prediction/inference** loads a trained model and runs it on new, compatible inputs.
-- Training is not normally required every time a sensor value arrives.
-- A model cannot make a valid prediction if required features are missing or are represented differently from the training data.
-
-Do not report accuracy or forecast horizon unless it comes from the project's actual evaluation results.
+**Live artifact selection is not identical to the training candidate list.** The live `SYSTEM/ml.py` expects the specific model families listed above. If training produces different names or artifact structures, either the training output or runtime loader must be aligned before deployment.
 
 ---
 
-## 7. Software requirements
+## 5. Dataset generation scripts
 
-- A supported Python 3 version compatible with the packages in `requirements.txt`.
-- Arduino IDE or PlatformIO for the ESP32 firmware.
-- USB data cable and appropriate ESP32 board configuration.
-- Access to the permitted datasets.
-- Wi-Fi network for network-based features.
-- Valid weather API credentials if required by the chosen provider.
-- A computer capable of running the backend and training scripts.
+Run these only when you want to rebuild or refresh the source datasets. They require internet access for uncached Open-Meteo requests.
 
-Python packages are separate from Arduino/ESP32 libraries. Installing `requirements.txt` does not install the firmware dependencies.
+From the repository root, use the script paths below **if those files are located exactly as shown**:
+
+```powershell
+python CODE/crop.py
+python CODE/pump.py
+python CODE/soil.py
+python CODE/rain.py
+```
+
+The generated filenames and output locations are controlled by each script. After running, inspect the printed `Saved To` path and copy/map the result to the exact CSV filename and schema expected by `DATASET/clean.py`.
+
+### Do not confuse the data sources
+
+- `CODE/crop.py`, `pump.py`, `soil.py`, and `rain.py` create datasets.
+- `DATASET/clean.py` validates and cleans the four main CSVs.
+- `DATASET/preprocess.py` prepares ML-ready splits.
+- `MODELS/train.py` trains artifacts.
+- `MODELS/test.py` evaluates artifacts.
+- `SYSTEM/ml.py` uses the trained artifacts during live operation.
+
+These scripts are not necessarily a one-click pipeline: their output filenames and schemas must line up with the locked input filenames and columns expected by the next step.
 
 ---
 
-## 8. Installation
+## 6. Cleaning, preprocessing, training and testing
 
-Open a terminal in the project root directory.
+### Install Python
 
-### Windows
+Use a currently supported 64-bit Python version compatible with the packages in `requirements.txt`. Open PowerShell in the repository root.
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
-If PowerShell prevents activation, use Command Prompt:
+If PowerShell blocks virtual-environment activation, use Command Prompt instead:
 
 ```bat
 .venv\Scripts\activate.bat
 ```
 
-### Linux/macOS
+If the project does not include a complete `requirements.txt`, install the dependencies imported by the scripts, including the relevant packages such as `pandas`, `numpy`, `requests`, `scikit-learn`, `joblib`, `xgboost`, `lightgbm`, `flask`, and the Open-Meteo client packages used by `weather.py`/`rain.py`. Prefer the repository's actual requirements file where available.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
+### Recommended data/model order
 
-Use the Python version supported by the project's dependencies. If installation fails, record the exact error and check package/Python compatibility rather than randomly upgrading or downgrading every package.
+1. Ensure the four canonical source CSVs are present in `DATASET/` and have the expected names/columns.
+2. If rebuilding data, run the four `CODE/*.py` dataset scripts and map their outputs to the canonical inputs after checking their schema.
+3. Clean the canonical CSVs:
 
----
+   ```powershell
+   python DATASET/clean.py
+   ```
 
-## 9. Dataset preparation and training
+4. Prepare train/test splits:
 
-Run commands from the repository root unless the script specifies otherwise.
+   ```powershell
+   python DATASET/preprocess.py
+   ```
 
-### Step 1: Inspect the scripts
+5. Train the candidate models:
 
-Before execution, open `DATASET/clean.py`, `DATASET/preprocess.py`, and `MODELS/train.py` and confirm:
-- Input dataset paths.
-- Output folder paths.
-- Expected column names.
-- Required command-line arguments.
-- Module and algorithm configuration.
-- Where trained artifacts and results are written.
+   ```powershell
+   python MODELS/train.py
+   ```
 
-### Step 2: Clean the datasets
+6. Test the available trained models:
 
-The expected entry point is:
+   ```powershell
+   python MODELS/test.py
+   ```
 
-```bash
-python DATASET/clean.py
-```
+7. Confirm that the model artifact names/folders produced by training are the same ones expected by `SYSTEM/ml.py`.
 
-Run this only if the script is configured to run directly and its paths match the current repository.
-
-### Step 3: Preprocess the datasets
-
-The expected entry point is:
-
-```bash
-python DATASET/preprocess.py
-```
-
-Check that the output folders for M1, M2, M3, and M4 contain the files expected by the training script.
-
-### Step 4: Train the models
-
-The expected entry point is:
-
-```bash
-python MODELS/train.py
-```
-
-Use any arguments required by the actual script. Training may take different amounts of time depending on dataset size, algorithms, CPU/GPU availability, and configuration.
-
-### Step 5: Evaluate the models
-
-The expected entry point is:
-
-```bash
-python MODELS/test.py
-```
-
-Check the script's required arguments and confirm that it evaluates the intended saved model and test split. Review the generated files in `TRAINING_RESULTS/` and `TEST_RESULTS/`.
-
-**Do not run these commands blindly if the source code uses different paths or requires arguments.** The folder layout alone does not reveal the exact command-line interface.
+**Do not run training blindly over valuable existing artifacts.** Keep a backup of existing datasets and models before regenerating them. The weather/dataset generation scripts can take time and may produce new rows or distributions.
 
 ---
 
-## 10. Connecting and programming the ESP32
+## 7. Hardware and wiring
 
-### Step 1: Inspect the firmware
+The pin mapping below is the project's documented ESP32 arrangement. Verify it against the exact firmware being flashed.
 
-Open `CODE/CODE.ino` in Arduino IDE or the corresponding sketch file. Check:
-- Board type and ESP32 board package.
-- GPIO pin assignments.
-- Sensor libraries and versions.
-- Wi-Fi setup/captive portal implementation.
-- Backend address, protocol, and port.
-- Relay active level and pump-control logic.
-- Any required compile-time settings.
+| Component | Signal | ESP32 connection | Purpose |
+|---|---|---:|---|
+| DHT11 | DATA | GPIO 25 | Air temperature and relative humidity |
+| Capacitive soil-moisture sensor | Analog output (AOUT) | GPIO 35 | Soil-moisture ADC reading |
+| FC-37 / rain module | AO | GPIO 34 | Analog wetness reading, if used by firmware |
+| FC-37 / rain module | DO | GPIO 27 | Digital wetness state, if used by firmware |
+| LDR module | DO | GPIO 26 | Light/day-night state |
+| DS18B20 | DATA | GPIO 4 | Soil temperature; use the required pull-up resistor for the sensor/bus |
+| Relay module | Control input | GPIO 23 | Pump ON/OFF command |
 
-### Step 2: Install the board package and libraries
+### Wiring and power safety
 
-In Arduino IDE, install the ESP32 board support package and the exact libraries imported by the firmware. Select the correct ESP32 board and the connected serial/COM port.
+1. **Turn off all power before wiring.**
+2. Connect sensor grounds to ESP32 GND so signals share a common reference.
+3. ESP32 GPIOs are **not 5 V tolerant**. Do not feed 5 V into an ESP32 input or ADC pin. Power sensor modules at a suitable voltage and ensure their output signal never exceeds the ESP32 input limit.
+4. Check the sensor module's pin labels (`VCC`, `GND`, `AO`, `DO`, `DATA`) rather than relying only on wire colours.
+5. For DS18B20, use the appropriate pull-up resistor between DATA and its supply as required by the module/sensor wiring.
+6. Do not power a water pump from an ESP32 GPIO. Use a relay/driver rated for the pump's voltage and current, and a separate pump supply rated for the load.
+7. Confirm the relay module is compatible with the ESP32's logic level and the firmware's active level before connecting the pump.
+8. Keep water away from the ESP32, relay contacts, mains wiring and exposed connections. Use a protected enclosure and proper insulation.
+9. Test the controller with the pump supply disconnected first. Verify sensor readings and relay status before a wet test.
+10. Never leave a pump unattended during initial testing. Provide a safe way to cut power.
 
-Do not install libraries based only on a guessed list; inspect the `#include` statements and firmware configuration.
+### Relay behaviour
 
-### Step 3: Connect the hardware
-
-Wire each sensor to the GPIO and power pins specified by the firmware and verified wiring diagram. Verify supply voltage and common-ground requirements. Never connect a 5 V sensor output directly to an ESP32 GPIO.
-
-Keep the pump power circuit separate from the ESP32's GPIO drive capability and use a correctly rated relay/driver and power supply.
-
-### Step 4: Upload and inspect serial output
-
-Compile and upload the firmware. Open the serial monitor at the baud rate specified by the sketch. Check for startup messages, sensor readings, Wi-Fi state, and backend connection errors.
-
-### Step 5: Configure Wi-Fi
-
-Follow the actual setup/captive-portal instructions implemented in the firmware. The exact access-point name, address, setup URL, and credential workflow must be taken from the code or device instructions; they are not assumed here.
-
-### Step 6: Verify telemetry
-
-Confirm that the device is connected and that the backend receives fresh readings. Compare displayed values with the serial output and verify timestamps where available.
-
-### Step 7: Test the pump safely
-
-Initially test the relay without the pump load if practical. Then test pump operation with suitable power and water precautions. Verify manual mode, automatic mode, OFF behaviour, timed operation, and recovery behaviour before leaving the system unattended.
+The documented firmware arrangement uses GPIO23. The previously reviewed firmware logic treats relay activation as **active LOW** and releases the relay by changing the pin to a high-impedance/input state. This is unusual compared with a simple always-output HIGH/LOW implementation, so inspect the exact `CODE.ino` before modifying it. Do not change relay polarity without testing the actual module.
 
 ---
 
-## 11. Running the application
+## 8. ESP32 Wi-Fi setup portal: first-time login
 
-The likely main entry point is `SYSTEM/main.py`, based on the current folder layout. Confirm that it imports the correct modules and includes a direct-run entry point before starting it.
+The ESP32 setup portal is used to give the device the credentials for the Wi-Fi network that the computer/phone and ESP32 should share. The ESP32's setup access point is normally reachable at **`192.168.4.1`**. The setup page route exposed by the device is `/wifi-setup`.
 
-From the repository root, the candidate command is:
+### Before starting
 
-```bash
+- Flash the correct `CODE/CODE.ino` firmware.
+- Power the ESP32 from a stable USB or regulated supply.
+- Keep your phone or laptop close to the ESP32.
+- Know the Wi-Fi network name (SSID) and password you want the ESP32 to join.
+- For initial provisioning, use a compatible 2.4 GHz Wi-Fi network if the firmware/board configuration requires it; ESP32 Wi-Fi is 2.4 GHz, not 5 GHz.
+- Avoid entering credentials for a captive network that requires a browser login, unless the firmware specifically supports it.
+
+### Method A — Connect directly to the ESP32 setup access point
+
+1. **Power on the ESP32.**
+2. Open Wi-Fi settings on your phone or laptop.
+3. Look for the setup network broadcast by the ESP32. Its exact SSID is defined by the firmware currently flashed to the board; inspect the Wi-Fi/AP name in `CODE/CODE.ino` or the serial startup log. Do not assume an SSID or password that is not defined there.
+4. Select that network and connect. If the network is password-protected, enter the password configured by the firmware. If it is open, your device may show a security warning; connect only to your own ESP32 setup network.
+5. Your phone may say **“No internet”**. That is expected while connected directly to the ESP32 setup AP. Choose to remain connected to it for setup.
+6. Open a browser and type this address into the address bar:
+
+   **`http://192.168.4.1/`**
+
+   If the root page does not show the setup interface, try:
+
+   **`http://192.168.4.1/wifi-setup`**
+
+7. If the page includes a Wi-Fi scan button, scan for available networks and choose your router/hotspot SSID.
+8. Enter the Wi-Fi password carefully. Passwords are case-sensitive. Submit/connect.
+9. Wait for the device to attempt connection. Do not repeatedly submit the form or power-cycle the ESP32 while it is connecting.
+10. If the portal reports success or displays the new IP address, note that IP address.
+11. Your phone/laptop may disconnect from the ESP32 AP once the ESP32 joins the router. This is normal.
+12. Connect your computer/phone back to the **same router or hotspot** that the ESP32 joined.
+13. Open the ESP32 dashboard using the IP address shown by the portal/serial log:
+
+   `http://<ESP32-IP>/`
+
+   Example only: if the device reports `192.168.1.50`, open `http://192.168.1.50/`. The example IP is not a guaranteed address.
+14. The runtime also prints an ESP32 setup URL in the form `http://<ESP32-IP>/wifi-setup`.
+
+### Method B — Configure Wi-Fi through the Python backend
+
+The Flask backend includes Wi-Fi provisioning proxy endpoints and uses `192.168.4.1` as the setup AP address. When the computer is connected to the ESP32 setup network, start the Python runtime and use the backend's Wi-Fi setup UI/endpoints if that interface is present in your project.
+
+- Backend base URL: `http://127.0.0.1:5000`
+- Setup AP address: `192.168.4.1`
+- The backend looks for optional setup HTML files named `44.html` or `wifi_setup.html` in the project root or `SYSTEM/`.
+- If those files are not present, the ESP32's own setup page is the direct route to use.
+
+Do not confuse the ESP32 setup page with the Python dashboard/API. The ESP32 hosts the device dashboard; the Python backend provides the separate ML/control API.
+
+### After Wi-Fi setup
+
+For normal operation, the computer running Python and the ESP32 must be on the same local network. If the router assigns a new IP after reboot, use the new IP shown in the router/serial log or allow the project's UDP discovery to find the device. The runtime's discovery implementation listens for the device response on UDP port `4210`; host firewall rules can block discovery.
+
+### If the setup page will not open
+
+1. Confirm the phone/laptop is still connected to the ESP32 AP, not silently back on home Wi-Fi/mobile data.
+2. Type the address exactly as `http://192.168.4.1/`; HTTPS may fail because the local setup portal is HTTP.
+3. Disable mobile data temporarily if the phone keeps switching away from a Wi-Fi network with no internet.
+4. Try the alternate path `http://192.168.4.1/wifi-setup`.
+5. Forget the ESP32 setup network and reconnect.
+6. Restart the ESP32 and watch the serial monitor for AP startup messages and the exact SSID.
+7. Confirm that the firmware actually starts a setup AP and serves the route. If the AP never appears, the issue is firmware/power/startup—not the Python ML models.
+8. If the portal loads but cannot find the home network, check 2.4 GHz compatibility, SSID visibility, password spelling and router security settings.
+9. If it connects but the dashboard stops responding, reconnect the computer to the router and find the ESP32's new LAN IP.
+10. Do not factory-reset or erase saved configuration unless necessary; the exact reset procedure depends on the firmware.
+
+### Wi-Fi and privacy
+
+The supplied backend code says it does not store Wi-Fi passwords. Enter credentials only into your own device's setup portal. Do not publish router passwords, tokens or other secrets in screenshots, logs, Git commits or this README.
+
+---
+
+## 9. Start the complete Python system
+
+After Wi-Fi provisioning, connect the computer and ESP32 to the same local network.
+
+### 1. Configure the project
+
+Review `SYSTEM/config.py`. Check:
+- ESP32 IP/hostname behaviour;
+- polling intervals;
+- location and weather settings;
+- runtime paths and model-artifact paths;
+- soil-moisture thresholds and rain protection settings.
+
+Do not put router credentials into Python source. Keep local secrets out of version control.
+
+### 2. Check trained model artifacts
+
+Before starting the live runtime, make sure the artifact folders expected by `SYSTEM/ml.py` exist and contain the pipeline/model/encoder files required by the loader. If not, complete preprocessing and training first.
+
+### 3. Start the runtime
+
+From the repository root, with the virtual environment active:
+
+```powershell
 python SYSTEM/main.py
 ```
 
-If the code is designed to be launched from inside `SYSTEM/`, the appropriate command may instead be:
+During initialization the program starts the backend, attempts to connect to the ESP32, loads ML models, initializes weather services and starts background loops. It prints the ESP32 dashboard and setup URLs when an ESP32 client is configured.
 
-```bash
-cd SYSTEM
-python main.py
+The backend is started on `0.0.0.0:5000`, meaning it listens on available network interfaces. On a trusted private network, the local health endpoint is:
+
+`http://127.0.0.1:5000/api/health`
+
+Use **Ctrl+C** in the runtime terminal to stop the application cleanly.
+
+### 4. Access the device dashboard
+
+Open the IP printed by the application or reported by the ESP32:
+
+`http://<ESP32-IP>/`
+
+To open the device setup page after it has joined Wi-Fi:
+
+`http://<ESP32-IP>/wifi-setup`
+
+The actual address depends on the router's DHCP assignment.
+
+---
+
+## 10. Dashboard and backend endpoints
+
+The exact set of routes is defined by the firmware and backend source. The following routes are present in the supplied Python code or documented by the ESP32 client.
+
+### Python backend (port 5000)
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/health` | Basic backend health check |
+| GET | `/api/backend/status` | Backend/runtime status |
+| GET | `/api/device/discover` | Try to discover ESP32 on the LAN |
+| GET | `/api/device/status` | Device status |
+| GET | `/api/device/ip` | Current configured/discovered device IP |
+| GET | `/api/data` | Latest device telemetry |
+| GET | `/api/ml/status` | Model availability/status |
+| GET | `/api/ml/options` | Available ML prediction options |
+| POST | `/api/ml/live` | Run the combined live M1–M4 prediction flow |
+| GET | `/api/wifi/scan` | Proxy Wi-Fi scan to the ESP32 |
+| POST | `/api/wifi/connect` | Proxy Wi-Fi connection request to the ESP32 |
+| GET | `/api/wifi/status` | Proxy Wi-Fi connection status |
+
+Health-check example:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:5000/api/health
 ```
 
-Use the method supported by the actual imports and configuration. Do not run both approaches interchangeably without checking how relative paths are resolved.
+Model-status example:
 
-After starting the application:
+```powershell
+Invoke-RestMethod http://127.0.0.1:5000/api/ml/status
+```
 
-1. Read the terminal output for the actual local URL/port and startup errors.
-2. Open the reported URL in a browser.
-3. Connect the ESP32 to the configured network.
-4. Verify that readings are updating.
-5. Check weather API status separately from local sensor status.
-6. Test each ML module with valid inputs.
-7. Test pump controls under safe conditions.
+The live prediction endpoint expects a JSON POST body. Example payload:
 
-If the application uses a Flask CLI instead of a direct-run entry point, follow the run instructions defined in the source code.
+```json
+{
+  "location": "Chikkamagaluru",
+  "soil_type": "Red Soil",
+  "irrigation": "Drip",
+  "crop_type": null,
+  "best_time": "Any",
+  "region": "Chikkamagaluru"
+}
+```
 
----
+This example demonstrates the request shape; it is not a guarantee that predictions succeed if sensor telemetry or model artifacts are missing.
 
-## 12. Internet and weather API
+### ESP32 device endpoints
 
-The weather integration depends on the configured provider, endpoint, location, credentials, network availability, and response format.
+The Python client communicates with device routes including:
+- `GET /api/data`
+- `GET /api/status`
+- `GET /api/config`
+- `POST /api/system`
+- `POST /api/mode`
+- `POST /api/pump`
+- `POST /api/config`
+- `GET /api/wifi/scan`
+- `POST /api/wifi/connect`
+- `GET /api/wifi/status`
 
-### Configuration
-
-1. Inspect `SYSTEM/weather.py` and `SYSTEM/config.py`.
-2. Identify the exact API provider and required environment-variable names.
-3. Create a local `.env` file if the application uses `python-dotenv`.
-4. Add valid credentials and location configuration locally.
-5. Test a successful response and an error/timeout response.
-
-Use `.env.example` to document variable names without including real secrets.
-
-### API behaviour
-
-- A successful API request can provide weather data for the configured location.
-- A forecast is an estimate supplied by the external provider, not a direct sensor measurement.
-- API refresh frequency depends on the implementation and provider.
-- API data should be checked for timestamps, units, missing values, and errors.
-- API data may be unavailable without internet access.
-
-Do not publish API keys, account identifiers, or private location information.
+These are device endpoints served by the ESP32, not by the Flask server. Open them using the ESP32 IP, not `127.0.0.1:5000`.
 
 ---
 
-## 13. Irrigation modes and safety
+## 11. Irrigation logic and safety
 
-### Manual mode
+### Operating modes
 
-The user sends a pump command through the available interface. The command must be received and validated by the control path before the relay is switched.
+- **AUTO:** the control layer evaluates sensor telemetry, configured moisture thresholds, rain protection and available model outputs before requesting pump operation.
+- **MANUAL:** an operator can request pump control through the supported interface, subject to the device's safety rules.
+- **System disabled:** should prevent normal automatic operation. Confirm the actual firmware's handling before unattended use.
 
-### Automatic mode
+### Control ownership
 
-The system uses its configured rules and/or ML output to support pump decisions. Verify the actual priority between the model prediction, local sensor rules, wetness checks, manual override, and safety conditions in the code.
+The Python controller chooses the requested action, but the ESP32 owns the physical relay and pump execution. The Python process cannot switch a physical pump if the ESP32 is offline or the device endpoint cannot be reached.
 
-### Safety checks to verify
+### Safe commissioning sequence
 
-- A reliable OFF command is available.
-- Invalid or out-of-range sensor readings are handled.
-- Repeated ON/OFF switching is controlled using appropriate filtering/hysteresis where implemented.
-- Timed watering has a defined stop behaviour.
-- Pump state is safe after startup, reboot, or communication loss.
-- Rain/wetness restrictions behave as intended.
-- The pump supply, relay, and wiring are correctly rated.
+1. Test the ESP32 and each sensor with the pump power disconnected.
+2. Check readings in open air, in representative soil and after watering.
+3. Verify the displayed moisture percentage against a calibration made for the actual probe and soil.
+4. Verify rain/wetness polarity by testing both dry and wet conditions.
+5. Test AUTO/MANUAL and system enable/disable behaviour without a live pump load first.
+6. Test the relay with a safe indicator/load if available.
+7. Connect the pump supply only after relay polarity, current rating and wiring are verified.
+8. Observe a complete watering pulse and soak period; make sure the sensor is not directly next to the water outlet, which can create a misleading local reading.
 
-The FC-37/raindrop module detects wetness at its plate; it should not be described as measuring rainfall in millimetres. The system should not be left unattended until hardware and software safeguards have been tested.
+### Soil-moisture calibration
 
----
-
-## 14. Backup and offline behaviour
-
-Different backup mechanisms solve different problems:
-
-- **Source-code backup:** GitHub preserves versioned code.
-- **Dataset backup:** Retain original datasets separately and keep track of their source and license.
-- **Model backup:** Save trained model artifacts and document how to regenerate them.
-- **API fallback:** A cached previous response is possible only if caching is implemented; cached data should be marked with its timestamp.
-- **Offline sensor operation:** The ESP32 can sample sensors without internet if the firmware supports it.
-- **Offline irrigation:** Local pump control can continue without the PC backend only if the required control logic resides on the ESP32.
-- **Offline buffering:** Recovery of missed telemetry requires an implemented storage queue; reconnecting alone does not recover lost readings.
-
-Test these behaviours individually. Do not assume that excluding model files from GitHub creates a backup, or that a device can run all ML predictions offline.
+The model helper in the supplied `SYSTEM/ml.py` currently converts raw ADC values with `dry=4095` and `wet=1500`. Previously observed readings for this project's sensor were roughly `2708–2728` in open air and `1123–1134` in water. Open air is not the same as dry soil, and immersion in water is not the same as saturated soil. Calibrate using the actual ESP32 ADC, probe, soil type and installation depth before relying on a displayed percentage for automatic irrigation.
 
 ---
 
-## 15. Troubleshooting
+## 12. Troubleshooting
 
-| Problem | Checks |
+| Symptom | Likely checks |
 |---|---|
-| Python package installation fails | Check Python version, virtual-environment activation, and the full pip error |
-| Application does not start | Check imports, working directory, configuration, and the terminal traceback |
-| ESP32 does not connect | Check Wi-Fi credentials, network band/support, signal, and serial output |
-| Dashboard shows no readings | Check device IP/host, backend URL, protocol/port, firewall, and telemetry logs |
-| Weather data unavailable | Check internet access, API credentials, endpoint, rate limits, and response errors |
-| Model cannot be loaded | Check artifact path, filename, library versions, and whether training completed |
-| Prediction fails | Check feature order, missing values, units, encoding, and preprocessing consistency |
-| Moisture reading fluctuates | Check sensor power, wiring, ADC configuration, calibration, placement, and filtering |
-| Pump does not switch | Check relay supply, active-high/active-low configuration, wiring, command path, and pump power |
-| Pump switches repeatedly | Check sensor noise, calibration, hysteresis, soak delay, and control priorities |
-
-When reporting an issue, include the exact error message, relevant terminal output, the command used, and the affected file—never credentials.
-
----
-
-## 16. Security
-
-- Keep `.env` out of Git.
-- Never commit Wi-Fi passwords, API keys, or private tokens.
-- Use `.env.example` with placeholder values only.
-- Protect remote pump-control endpoints with authentication and appropriate authorization.
-- Use secure communication for remote access and avoid exposing unauthenticated control ports directly to the public internet.
-- Validate commands and incoming data.
-- Check research and dataset redistribution licenses.
-- Inspect Git history before publishing to ensure secrets were not committed previously.
-
-Removing a secret from the current file does not remove it from previous commits. If a credential was exposed, revoke or rotate it.
+| ESP32 setup Wi-Fi does not appear | Check USB/power, firmware upload, serial startup logs and AP setup code in `CODE/CODE.ino`. |
+| `192.168.4.1` does not load | Reconnect to the ESP32 AP, use HTTP rather than HTTPS, try `/wifi-setup`, and check that the firmware serves the route. |
+| ESP32 joins Wi-Fi but Python cannot find it | Put PC and ESP32 on the same LAN; check the device IP; inspect `SYSTEM/config.py`; allow local UDP/HTTP traffic through the firewall. |
+| Dashboard works but ML fails | Check `DATASET/PREPROCESSED/`, trained artifact folders, exact artifact names, `SYSTEM/ml.py` logs and `/api/ml/status`. |
+| Backend health works but ESP32 is offline | Test `http://<ESP32-IP>/api/status`; verify Wi-Fi and LAN IP; try device discovery. |
+| `FileNotFoundError` for CSV | Confirm current working directory, expected filename and exact spelling; check the paths printed by the scripts. |
+| Cleaner reports missing columns | Compare the CSV header to `DATASET/clean.py`'s `EXPECTED_COLUMNS`; do not silently rename or reorder columns without checking downstream code. |
+| Preprocessing fails on timestamp or missing data | Inspect invalid timestamps/NaNs reported by the script; check that the right source dataset was used. |
+| Training skips a module | Confirm that its `train.csv` exists in the expected M1–M4 folder. |
+| Runtime says model/artifact missing | Confirm training completed and that the artifact names, directory names and formats match `SYSTEM/ml.py`. |
+| Moisture reading jumps or seems wrong | Check ADC wiring, shared ground, power noise, filtering, calibration and sensor placement. Keep the probe away from the direct water stream. |
+| Pump turns on/off unexpectedly | Verify AUTO/MANUAL mode, system enable flag, soil threshold configuration, rain-protection state, sensor calibration and relay active level. |
+| Weather requests fail | Confirm internet connectivity, Open-Meteo availability, system date/time and request logs. Cached historical data may still exist. |
+| Wi-Fi scan/connect works on ESP32 but not through backend | Ensure the PC can reach the setup AP while provisioning and check the backend logs and `/api/wifi/*` endpoints. |
 
 ---
 
-## 17. Reproducibility and limitations
+## 13. Data quality and model limitations
 
-For reproducible results, record:
-- Python and package versions.
-- Dataset source, version, and license.
-- Random seeds and train/validation/test split method.
-- Feature and target definitions for every module.
-- Model parameters and evaluation metrics.
-- Model artifact filenames and generation date.
-- ESP32 board settings, sensor pin mapping, and firmware dependencies.
-
-Forecast accuracy, water savings, crop-yield improvements, remote-access availability, and offline recovery should be reported only when supported by tests or measured results.
+1. **Historical weather is not identical to local sensor data.** Open-Meteo soil moisture is a gridded/modelled weather variable, not a measurement from this project's exact capacitive probe.
+2. **Dataset labels influence model behaviour.** M2 pump labels are derived from the script's threshold/hysteresis rules. A model trained on those labels learns that rule pattern; it is not independent proof of agronomic optimality.
+3. **Synthetic/balanced crop rows are not additional independent field experiments.** Evaluate on appropriately separated data and report the data-generation method honestly.
+4. **Use chronological test splits for time series.** Randomly mixing nearby hours across train and test can produce over-optimistic evaluation.
+5. **Feature schema must match exactly.** Column spelling, capitalization, units, category labels and feature order/meaning must be consistent between dataset preparation, training and live inference.
+6. **A successful model load does not guarantee reliable field performance.** Validate model predictions in the intended region, soil, crop and irrigation setup.
+7. **Automatic irrigation is a physical action.** Start with conservative thresholds, supervise the pump, and retain a manual power cut-off.
+8. **Network loss must be treated as a control fault.** If the Python controller cannot reach the ESP32, do not assume a new command has been applied.
 
 ---
 
-## 18. Research references
+## 14. Quick checklist
 
-The `PAPERS/` folder contains research material used during project development. Add a reference list here with each paper's title, authors, publication year, DOI or official URL, and a brief note describing its relevance.
+### Before the first run
+- [ ] Upload the intended `CODE/CODE.ino`.
+- [ ] Confirm the firmware's actual setup AP SSID/password from the sketch or serial output.
+- [ ] Connect to the ESP32 AP and open `http://192.168.4.1/`.
+- [ ] Join the ESP32 to the target 2.4 GHz Wi-Fi network.
+- [ ] Reconnect the PC to the same network.
+- [ ] Open `http://<ESP32-IP>/` and verify the dashboard.
+- [ ] Verify sensor readings and relay polarity with the pump supply disconnected.
+- [ ] Check canonical dataset filenames and columns.
+- [ ] Run clean → preprocess → train → test if artifacts need to be built.
+- [ ] Confirm that `SYSTEM/ml.py` can load all required live artifacts.
+- [ ] Start `python SYSTEM/main.py`.
+- [ ] Check `http://127.0.0.1:5000/api/health` and `/api/ml/status`.
+- [ ] Test AUTO/MANUAL and the pump under supervision.
 
-Only redistribute full-text PDFs when their license or permission allows it. Otherwise, link to the publisher or repository record.
+### Normal operation
+1. Power the ESP32 and hardware safely.
+2. Ensure the ESP32 and computer are connected to the same LAN.
+3. Activate the Python virtual environment.
+4. Run `python SYSTEM/main.py`.
+5. Open the ESP32 dashboard.
+6. Check telemetry, weather freshness, model status and current control mode.
+7. Supervise automatic irrigation and stop the pump if readings or behaviour look unsafe.
 
 ---
 
-## 🌱 Project statement
-
-**Krushi Mithra connects environmental sensing, agricultural machine learning, weather information, and irrigation control to explore practical approaches to data-driven farming.**
-
-Built as an engineering project to learn and demonstrate IoT, embedded systems, data preparation, machine learning, API integration, and hardware–software integration.
+**Project name:** Krushi Mithra  
+**Project category:** IoT Smart Farming, Machine Learning and Intelligent Irrigation  
+**Primary runtime:** ESP32 firmware + Python/Flask  
+**Weather source:** Open-Meteo  
+**ML tasks:** M1 Crop Recommendation · M2 Context-Aware Irrigation · M3 Future Soil Moisture Prediction · M4 Rainfall Forecasting
