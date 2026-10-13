@@ -279,7 +279,10 @@ Krushi Mithra runs four distinct machine learning pipelines:
 - **How it Works:** Soil moisture dynamics depend heavily on recent moisture trends and cyclic temperature variations. The model uses:
   - **Lag features:** Soil moisture from 1 hour ago ($t-1$) and 3 hours ago ($t-3$), stored in `SYSTEM/data/m3_sensor_history.jsonl`.
   - **Cyclic encodings:**
-    $$\text{hour\_sin} = \sin\left(\frac{2\pi \cdot \text{hour}}{24}\right), \quad \text{hour\_cos} = \cos\left(\frac{2\pi \cdot \text{hour}}{24}\right)$$
+    $$
+    \mathrm{hour\_sin} = \sin\left(\frac{2\pi \cdot \mathrm{hour}}{24}\right), \quad
+    \mathrm{hour\_cos} = \cos\left(\frac{2\pi \cdot \mathrm{hour}}{24}\right)
+    $$
   - **Result:** If soil moisture is currently low ($24\%$) but the model predicts it will increase due to recent rain, irrigation is withheld.
 
 #### M4: Microclimate Rainfall Forecaster
@@ -335,7 +338,12 @@ Krushi Mithra uses two layers of protection to ensure the system remains safe an
      - **Soil Moisture** $\ge 50\%$**:** Pump turns **OFF**.
 5. **Soil Moisture Calibration:**
    - Converts raw ADC values ($0\text{--}4095$) into calibrated moisture percentages:
-     $$\text{Moisture \%} = \operatorname{clamp}\left(\frac{2800 - \text{Raw ADC}}{2800 - 2112} \times 100,\; 0,\; 100\right)$$
+     $$
+     \text{Moisture \%} = \mathrm{clamp}\left(
+     \frac{2800 - \text{Raw ADC}}{2800 - 2112} \times 100,
+     0, 100
+     \right)
+     $$
    - Raw ADC $\ge 2800$: Dry soil ($0\%$).
    - Raw ADC $\le 2112$: Saturated soil ($100\%$).
 
